@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sync Results</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            background-color: #111;
+            color: #eee;
+            margin: 0;
+            padding: 0;
+        }
+
+        .container {
+            max-width: 600px;
+            margin: auto;
+            padding: 20px;
+        }
+
+        h1 {
+            text-align: center;
+        }
+
+        .card {
+            background: #1c1c1c;
+            padding: 16px;
+            border-radius: 12px;
+            margin-bottom: 12px;
+        }
+
+        .summary {
+            display: flex;
+            justify-content: space-between;
+            gap: 12px;
+            flex-wrap: wrap;
+        }
+
+        .summary p {
+            margin: 0;
+        }
+
+        .result-card {
+            border-left: 4px solid transparent;
+        }
+
+        .result-card.success-card {
+            border-left-color: #4caf50;
+        }
+
+        .result-card.error-card {
+            border-left-color: #f44336;
+        }
+
+        .title {
+            display: block;
+            margin-bottom: 8px;
+            overflow-wrap: anywhere;
+        }
+
+        .success {
+            color: #4caf50;
+        }
+
+        .error {
+            color: #f44336;
+            overflow-wrap: anywhere;
+        }
+
+        a:focus-visible {
+            outline: 2px solid #80b7ff;
+            outline-offset: 2px;
+        }
+
+        a {
+            display: block;
+            text-align: center;
+            margin-top: 20px;
+            color: #2d89ef;
+            text-decoration: none;
+        }
+    </style>
+</head>
+<body>
+    <main class="container">
+        {% set successes = results | selectattr("success") | list %}
+        {% set failures = results | rejectattr("success") | list %}
+        <h1>Sync Results</h1>
+
+        <div class="card summary" role="status" aria-live="polite">
+            <p><strong>{{ total }}</strong> book(s) processed</p>
+            <p class="success"><strong>{{ successes|length }}</strong> succeeded</p>
+            <p class="error"><strong>{{ failures|length }}</strong> failed</p>
+        </div>
+
+        {% for result in failures %}
+        <div class="card result-card error-card">
+            <strong class="title">{{ result.title }}</strong>
+            <span class="error" role="alert">✗ {{ result.message }}</span>
+        </div>
+        {% endfor %}
+
+        {% for result in successes %}
+        <div class="card result-card success-card">
+            <strong class="title">{{ result.title }}</strong>
+            <span class="success" role="status">✓ Uploaded</span>
+        </div>
+        {% endfor %}
+
+        <a href="/">Back</a>
+    </main>
+</body>
+</html>
