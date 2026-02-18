@@ -5,7 +5,7 @@ Sync tagged ebooks from Calibre-Web-Automated to BookFusion with a simple web UI
 ## What it does
 
 - Reads books tagged `bf` from your Calibre library database (`metadata.db`)
-- Uploads EPUB files to BookFusion via the Calibre API
+- Uploads ebook files to BookFusion via API
 - Removes the `bf` tag after successful upload
 - Provides a minimal UI to trigger sync and view results
 
