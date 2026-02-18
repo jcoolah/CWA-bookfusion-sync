@@ -2,6 +2,10 @@
 
 Sync tagged ebooks from Calibre-Web-Automated to BookFusion with a simple web UI.
 
+## Screenshot
+
+![bookfusion-sync screenshot](docs/screenshot.png)
+
 ## What it does
 
 - Reads books tagged `bf` from your Calibre library database (`metadata.db`)
