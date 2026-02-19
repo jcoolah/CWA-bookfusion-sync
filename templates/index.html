@@ -31,6 +31,27 @@
             margin-bottom: 12px;
         }
 
+        .mode-row {
+            display: flex;
+            gap: 8px;
+            margin-bottom: 12px;
+        }
+
+        .mode-row form {
+            flex: 1;
+        }
+
+        .mode-row button {
+            width: 100%;
+            padding: 10px;
+            font-size: 14px;
+            background: #2a2a2a;
+        }
+
+        .mode-row button.active {
+            background-color: #2d89ef;
+        }
+
         button {
             width: 100%;
             padding: 14px;
@@ -83,6 +104,13 @@
             font-size: 14px;
             text-align: center;
             margin: 0;
+        }
+
+        .status {
+            margin: 8px 0 0;
+            color: #c5c5c5;
+            font-size: 13px;
+            text-align: center;
         }
 
         .queue-grid {
@@ -157,6 +185,19 @@
         <h1>CWA Calibre Sync</h1>
 
         <div class="card">
+            <div class="mode-row">
+                <form action="/mode" method="post">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <input type="hidden" name="mode" value="manual">
+                    <button type="submit" class="{{ 'active' if mode == 'manual' else '' }}">Manual</button>
+                </form>
+                <form action="/mode" method="post">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <input type="hidden" name="mode" value="automatic">
+                    <button type="submit" class="{{ 'active' if mode == 'automatic' else '' }}">Automatic</button>
+                </form>
+            </div>
+
             <div class="count">
                 {{ count }} {{ 'Book' if count == 1 else 'Books' }} ready for sync
             </div>
@@ -165,12 +206,34 @@
             <form id="sync-form" action="/sync" method="post">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                 <button id="sync-button" type="submit">
+                    {% if mode == 'automatic' %}
+                    Sync Now (Manual Trigger)
+                    {% else %}
                     Sync {{ count }} Book{{ 's' if count != 1 else '' }} to BookFusion
+                    {% endif %}
                 </button>
             </form>
             {% else %}
             <div class="empty">No books ready for sync.</div>
-            <p class="hint">Tag books with <code>bf</code> in Calibre to queue them.</p>
+            <p class="hint">Tag books with <code>{{ sync_tag }}</code> in Calibre to queue them.</p>
+            {% endif %}
+
+            {% if mode == 'automatic' %}
+            <p class="status">Listening mode is active. Scheduler checks every {{ interval }} minutes.</p>
+            {% else %}
+            <p class="status">Manual mode is active. Sync only runs when you click the button.</p>
+            {% endif %}
+
+            {% if last_run %}
+            <p class="status">
+                Last run ({{ last_run['mode'] }}):
+                {{ last_run['succeeded'] }} succeeded,
+                {{ last_run['failed'] }} failed,
+                {{ last_run['skipped'] }} skipped
+                {% if last_run['completed_at'] %}
+                at {{ last_run['completed_at'] }}
+                {% endif %}
+            </p>
             {% endif %}
         </div>
         {% if count > 0 %}

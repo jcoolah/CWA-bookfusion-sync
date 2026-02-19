@@ -49,6 +49,10 @@
             border-left-color: #4caf50;
         }
 
+        .result-card.skipped-card {
+            border-left-color: #ffc107;
+        }
+
         .result-card.error-card {
             border-left-color: #f44336;
         }
@@ -68,6 +72,10 @@
             overflow-wrap: anywhere;
         }
 
+        .skipped {
+            color: #ffc107;
+        }
+
         a:focus-visible {
             outline: 2px solid #80b7ff;
             outline-offset: 2px;
@@ -84,20 +92,35 @@
 </head>
 <body>
     <main class="container">
-        {% set successes = results | selectattr("success") | list %}
+        {% set successes = results | selectattr("success") | rejectattr("skipped") | list %}
+        {% set skipped_results = results | selectattr("skipped") | list %}
         {% set failures = results | rejectattr("success") | list %}
         <h1>Sync Results</h1>
 
         <div class="card summary" role="status" aria-live="polite">
             <p><strong>{{ total }}</strong> book(s) processed</p>
-            <p class="success"><strong>{{ successes|length }}</strong> succeeded</p>
-            <p class="error"><strong>{{ failures|length }}</strong> failed</p>
+            <p class="success"><strong>{{ succeeded if succeeded is defined else successes|length }}</strong> succeeded</p>
+            <p class="error"><strong>{{ failed if failed is defined else failures|length }}</strong> failed</p>
+            <p class="skipped"><strong>{{ skipped if skipped is defined else skipped_results|length }}</strong> skipped</p>
         </div>
+
+        {% if message %}
+        <div class="card result-card error-card">
+            <span class="error" role="alert">Sync cycle error: {{ message }}</span>
+        </div>
+        {% endif %}
 
         {% for result in failures %}
         <div class="card result-card error-card">
             <strong class="title">{{ result.title }}</strong>
             <span class="error" role="alert">✗ {{ result.message }}</span>
+        </div>
+        {% endfor %}
+
+        {% for result in skipped_results %}
+        <div class="card result-card skipped-card">
+            <strong class="title">{{ result.title }}</strong>
+            <span class="skipped" role="status">• {{ result.message }}</span>
         </div>
         {% endfor %}
 
