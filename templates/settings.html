@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CWA-to-Bookfusion Sync Settings</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            background-color: #111;
+            color: #eee;
+            margin: 0;
+            padding: 0;
+        }
+
+        .container {
+            max-width: 700px;
+            margin: auto;
+            padding: 20px;
+        }
+
+        h1 {
+            text-align: center;
+            margin-bottom: 20px;
+        }
+
+        .card {
+            background: #1c1c1c;
+            padding: 16px;
+            border-radius: 12px;
+            margin-bottom: 12px;
+        }
+
+        label {
+            display: block;
+            font-size: 14px;
+            margin-bottom: 6px;
+            color: #d5d5d5;
+        }
+
+        input,
+        select {
+            width: 100%;
+            padding: 10px;
+            border-radius: 8px;
+            border: 1px solid #3d3d3d;
+            background: #111;
+            color: #eee;
+            box-sizing: border-box;
+            margin-bottom: 12px;
+        }
+
+        button {
+            width: 100%;
+            padding: 12px;
+            font-size: 16px;
+            border-radius: 8px;
+            border: none;
+            background-color: #2d89ef;
+            color: white;
+            cursor: pointer;
+        }
+
+        button:hover {
+            background-color: #1b5fad;
+        }
+
+        .status-ok {
+            color: #4caf50;
+            margin-top: 0;
+            margin-bottom: 12px;
+        }
+
+        .status-error {
+            color: #f44336;
+            margin-top: 0;
+            margin-bottom: 12px;
+        }
+
+        .hint {
+            color: #bcbcbc;
+            font-size: 13px;
+            margin: 0;
+        }
+
+        .links {
+            text-align: center;
+            margin-top: 16px;
+        }
+
+        a {
+            color: #2d89ef;
+            text-decoration: none;
+        }
+    </style>
+</head>
+<body>
+    <main class="container">
+        <h1>Settings</h1>
+        <div class="card">
+            {% if saved %}
+            <p class="status-ok">Settings saved. Scheduler and sync behavior updated.</p>
+            {% endif %}
+            {% if error %}
+            <p class="status-error">Invalid settings input. Please check values and try again.</p>
+            {% endif %}
+
+            <form action="/settings" method="post">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+                <label for="app_port">Port</label>
+                <input id="app_port" name="app_port" type="number" min="1" step="1" value="{{ app_port }}" required>
+
+                <label for="library_dir">Library Directory</label>
+                <input id="library_dir" name="library_dir" type="text" value="{{ library_dir }}" required>
+
+                <label for="api_key">BookFusion API Key</label>
+                <input id="api_key" name="api_key" type="text" value="{{ api_key }}">
+
+                <label for="sync_interval_minutes">Sync Interval (minutes)</label>
+                <input id="sync_interval_minutes" name="sync_interval_minutes" type="number" min="1" step="1" value="{{ sync_interval_minutes }}" required>
+
+                <label for="sync_tag">Sync Tag</label>
+                <input id="sync_tag" name="sync_tag" type="text" value="{{ sync_tag }}" required>
+
+                <label for="mode">Sync Mode</label>
+                <select id="mode" name="mode">
+                    <option value="manual" {{ 'selected' if mode == 'manual' else '' }}>Manual</option>
+                    <option value="automatic" {{ 'selected' if mode == 'automatic' else '' }}>Automatic (Listening Mode)</option>
+                </select>
+
+                <button type="submit">Save Settings</button>
+            </form>
+
+            <p class="hint">Settings are saved to persistent runtime config and port changes take effect after container restart.</p>
+        </div>
+        <div class="links">
+            <a href="/">Back to Sync Queue</a>
+        </div>
+    </main>
+</body>
+</html>

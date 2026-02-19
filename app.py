@@ -7,22 +7,43 @@ import atexit
 import threading
 from datetime import datetime, timezone
 from logging.handlers import RotatingFileHandler
+from urllib.parse import urlparse
 import requests
 from apscheduler.schedulers.background import BackgroundScheduler
 from flask import Flask, abort, redirect, render_template, request, send_file, url_for
 from flask_wtf.csrf import CSRFProtect
 
-APP_PORT = int(os.getenv("APP_PORT", "8090"))
-LIB_DIR = os.getenv("CALIBRE_LIBRARY_DIR", "/calibre-library")
-API_KEY = os.getenv("BOOKFUSION_API_KEY")
+ENV_FILE_PATH = os.getenv("SYNC_ENV_FILE_PATH", "/app/data/runtime.env")
+
+
+def load_env_file(path):
+    if not os.path.isfile(path):
+        return
+    with open(path, "r", encoding="utf-8") as f:
+        for raw_line in f:
+            line = raw_line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, val = line.split("=", 1)
+            key = key.strip()
+            val = val.strip()
+            if val and val[0] == val[-1] and val[0] in ("'", '"'):
+                val = val[1:-1]
+            os.environ.setdefault(key, val)
+
+
+load_env_file(ENV_FILE_PATH)
+
+DEFAULT_APP_PORT = int(os.getenv("APP_PORT", "8090"))
+DEFAULT_LIBRARY_DIR = os.getenv("CALIBRE_LIBRARY_DIR", "/calibre-library")
+DEFAULT_API_KEY = os.getenv("BOOKFUSION_API_KEY", "")
 API_BASE = os.getenv("BOOKFUSION_API_BASE", "https://www.bookfusion.com/calibre-api/v1")
-SYNC_INTERVAL_MINUTES = int(os.getenv("SYNC_INTERVAL_MINUTES", "15"))
+DEFAULT_SYNC_INTERVAL_MINUTES = int(os.getenv("SYNC_INTERVAL_MINUTES", "15"))
 SYNC_STATE_DB_PATH = os.getenv("SYNC_STATE_DB_PATH", "/app/data/synced_books.db")
 SYNC_LOG_PATH = os.getenv("SYNC_LOG_PATH", "/app/logs/bookfusion-sync.log")
 DEFAULT_SYNC_MODE = os.getenv("DEFAULT_SYNC_MODE", "manual").strip().lower()
-SYNC_TAG = (os.getenv("SYNC_TAG", "bf") or "bf").strip()
+DEFAULT_SYNC_TAG = (os.getenv("SYNC_TAG", "bf") or "bf").strip()
 
-DB_PATH = os.path.join(LIB_DIR, "metadata.db")
 VALID_MODES = {"manual", "automatic"}
 if DEFAULT_SYNC_MODE not in VALID_MODES:
     DEFAULT_SYNC_MODE = "manual"
@@ -73,11 +94,141 @@ def utc_now_iso():
     return datetime.now(timezone.utc).isoformat()
 
 
+def enforce_same_origin_post():
+    origin = request.headers.get("Origin")
+    referer = request.headers.get("Referer")
+    expected_host = request.host
+
+    if origin:
+        parsed = urlparse(origin)
+        if parsed.netloc != expected_host:
+            abort(403)
+        return
+
+    if referer:
+        parsed = urlparse(referer)
+        if parsed.netloc != expected_host:
+            abort(403)
+
+
 def state_conn():
     os.makedirs(os.path.dirname(SYNC_STATE_DB_PATH), exist_ok=True)
     conn = sqlite3.connect(SYNC_STATE_DB_PATH)
     conn.row_factory = sqlite3.Row
     return conn
+
+
+def get_setting(key):
+    conn = state_conn()
+    row = conn.execute(
+        "SELECT value FROM sync_settings WHERE key = ?",
+        (key,),
+    ).fetchone()
+    conn.close()
+    return row["value"] if row else None
+
+
+def set_setting(key, value):
+    conn = state_conn()
+    conn.execute(
+        """
+        INSERT INTO sync_settings(key, value)
+        VALUES (?, ?)
+        ON CONFLICT(key) DO UPDATE SET value = excluded.value
+        """,
+        (key, value),
+    )
+    conn.commit()
+    conn.close()
+
+
+def get_port():
+    raw = get_setting("app_port") or str(DEFAULT_APP_PORT)
+    try:
+        port = int(raw)
+    except ValueError:
+        port = DEFAULT_APP_PORT
+    return port if port > 0 else DEFAULT_APP_PORT
+
+
+def get_library_dir():
+    return (get_setting("library_dir") or DEFAULT_LIBRARY_DIR).strip()
+
+
+def get_api_key():
+    return (get_setting("api_key") or DEFAULT_API_KEY).strip()
+
+
+def get_sync_interval_minutes():
+    raw = get_setting("sync_interval_minutes") or str(DEFAULT_SYNC_INTERVAL_MINUTES)
+    try:
+        interval = int(raw)
+    except ValueError:
+        interval = DEFAULT_SYNC_INTERVAL_MINUTES
+    return interval if interval > 0 else DEFAULT_SYNC_INTERVAL_MINUTES
+
+
+def get_sync_tag():
+    return (get_setting("sync_tag") or DEFAULT_SYNC_TAG).strip() or "bf"
+
+
+def get_metadata_db_path():
+    return os.path.join(get_library_dir(), "metadata.db")
+
+
+def parse_env_file(path):
+    values = {}
+    if not os.path.isfile(path):
+        return values
+    with open(path, "r", encoding="utf-8") as f:
+        for raw_line in f:
+            line = raw_line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, val = line.split("=", 1)
+            values[key.strip()] = val.strip()
+    return values
+
+
+def save_managed_env(settings):
+    os.makedirs(os.path.dirname(ENV_FILE_PATH), exist_ok=True)
+    current = parse_env_file(ENV_FILE_PATH)
+    current.update(settings)
+    ordered_keys = [
+        "APP_PORT",
+        "CALIBRE_LIBRARY_DIR",
+        "BOOKFUSION_API_KEY",
+        "SYNC_INTERVAL_MINUTES",
+        "SYNC_TAG",
+        "DEFAULT_SYNC_MODE",
+    ]
+    lines = [f"{k}={current[k]}" for k in ordered_keys if k in current]
+    for key in sorted(current):
+        if key not in ordered_keys:
+            lines.append(f"{key}={current[key]}")
+    with open(ENV_FILE_PATH, "w", encoding="utf-8") as f:
+        f.write("\n".join(lines) + "\n")
+
+
+def configure_scheduler():
+    minutes = get_sync_interval_minutes()
+    if scheduler.get_job("bookfusion-listening-mode"):
+        scheduler.reschedule_job(
+            "bookfusion-listening-mode",
+            trigger="interval",
+            minutes=minutes,
+        )
+    else:
+        scheduler.add_job(
+            scheduled_sync_job,
+            "interval",
+            minutes=minutes,
+            id="bookfusion-listening-mode",
+            replace_existing=True,
+            max_instances=1,
+            coalesce=True,
+        )
+    logger.info("Scheduler interval set to %s minute(s)", minutes)
 
 
 def init_state_db():
@@ -116,27 +267,25 @@ def init_state_db():
     )
     conn.commit()
     conn.close()
+    bootstrap_defaults = {
+        "app_port": str(DEFAULT_APP_PORT),
+        "library_dir": DEFAULT_LIBRARY_DIR,
+        "api_key": DEFAULT_API_KEY,
+        "sync_interval_minutes": str(DEFAULT_SYNC_INTERVAL_MINUTES),
+        "sync_tag": DEFAULT_SYNC_TAG,
+    }
+    for k, v in bootstrap_defaults.items():
+        if get_setting(k) is None:
+            set_setting(k, v)
 
 
 def get_sync_mode():
-    conn = state_conn()
-    row = conn.execute(
-        "SELECT value FROM sync_settings WHERE key = 'sync_mode'"
-    ).fetchone()
-    if row and row["value"] in VALID_MODES:
-        mode = row["value"]
+    value = get_setting("sync_mode")
+    if value in VALID_MODES:
+        mode = value
     else:
         mode = DEFAULT_SYNC_MODE
-        conn.execute(
-            """
-            INSERT INTO sync_settings(key, value)
-            VALUES ('sync_mode', ?)
-            ON CONFLICT(key) DO UPDATE SET value = excluded.value
-            """,
-            (mode,),
-        )
-        conn.commit()
-    conn.close()
+        set_setting("sync_mode", mode)
     return mode
 
 
@@ -144,17 +293,7 @@ def set_sync_mode(mode):
     if mode not in VALID_MODES:
         raise ValueError("Invalid sync mode")
 
-    conn = state_conn()
-    conn.execute(
-        """
-        INSERT INTO sync_settings(key, value)
-        VALUES ('sync_mode', ?)
-        ON CONFLICT(key) DO UPDATE SET value = excluded.value
-        """,
-        (mode,),
-    )
-    conn.commit()
-    conn.close()
+    set_setting("sync_mode", mode)
     logger.info("Sync mode updated to %s", mode)
 
 
@@ -234,9 +373,10 @@ def compute_digest(file_path):
     return h.hexdigest()
 
 
-def get_tagged_books(tag_name=SYNC_TAG):
-    conn = sqlite3.connect(DB_PATH)
+def get_tagged_books(tag_name=None):
+    conn = sqlite3.connect(get_metadata_db_path())
     conn.row_factory = sqlite3.Row
+    use_tag = tag_name or get_sync_tag()
     rows = conn.execute(
         """
         SELECT books.id, books.title, books.path
@@ -245,14 +385,14 @@ def get_tagged_books(tag_name=SYNC_TAG):
         JOIN tags ON tags.id = books_tags_link.tag
         WHERE tags.name = ?
         """,
-        (tag_name,),
+        (use_tag,),
     ).fetchall()
     conn.close()
     return [dict(r) for r in rows]
 
 
 def get_primary_epub(book):
-    book_dir = os.path.join(LIB_DIR, book["path"])
+    book_dir = os.path.join(get_library_dir(), book["path"])
     if not os.path.isdir(book_dir):
         return None, None, f"Book folder missing: {book_dir}"
 
@@ -265,7 +405,7 @@ def get_primary_epub(book):
 
 
 def get_book_path(book_id):
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(get_metadata_db_path())
     row = conn.execute(
         "SELECT path FROM books WHERE id = ?",
         (book_id,),
@@ -282,8 +422,9 @@ def get_cover_path(book_dir):
     return None
 
 
-def remove_tag(book_id, tag_name=SYNC_TAG):
-    conn = sqlite3.connect(DB_PATH)
+def remove_tag(book_id, tag_name=None):
+    conn = sqlite3.connect(get_metadata_db_path())
+    use_tag = tag_name or get_sync_tag()
     conn.execute(
         """
         DELETE FROM books_tags_link
@@ -292,14 +433,14 @@ def remove_tag(book_id, tag_name=SYNC_TAG):
             SELECT id FROM tags WHERE name = ?
         )
         """,
-        (book_id, tag_name),
+        (book_id, use_tag),
     )
     conn.commit()
     conn.close()
 
 
 def get_full_metadata(book_id):
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(get_metadata_db_path())
     conn.row_factory = sqlite3.Row
 
     title = conn.execute(
@@ -350,10 +491,11 @@ def get_full_metadata(book_id):
 
     conn.close()
 
+    sync_tag = get_sync_tag()
     return {
         "title": title,
         "authors": [a["name"] for a in authors],
-        "tags": [t["name"] for t in tags if t["name"] != SYNC_TAG],
+        "tags": [t["name"] for t in tags if t["name"] != sync_tag],
         "summary": comments["text"] if comments else None,
         "isbn": next((i["val"] for i in identifiers if i["type"] == "isbn"), None),
         "language": languages[0]["lang_code"] if languages else None,
@@ -365,8 +507,9 @@ def get_full_metadata(book_id):
 # -------------------------
 
 def upload_book(book, file_name, file_path, digest):
+    api_key = get_api_key()
     headers = {
-        "Authorization": f"Basic {requests.auth._basic_auth_str(API_KEY, '')[6:]}"
+        "Authorization": f"Basic {requests.auth._basic_auth_str(api_key, '')[6:]}"
     }
 
     # 1️⃣ INIT
@@ -437,11 +580,11 @@ def upload_book(book, file_name, file_path, digest):
     return True, "Uploaded"
 
 
-def run_sync_cycle(mode):
+def run_sync_cycle(mode, force_resync=False):
     if mode not in VALID_MODES:
         raise ValueError("Invalid mode for sync cycle")
 
-    if not API_KEY:
+    if not get_api_key():
         msg = "BOOKFUSION_API_KEY is not configured"
         logger.error(msg)
         return {
@@ -486,7 +629,7 @@ def run_sync_cycle(mode):
 
             digest = compute_digest(file_path)
             previous_digest = get_synced_digest(book["id"])
-            if mode == "automatic" and previous_digest == digest:
+            if (not force_resync) and previous_digest == digest:
                 skipped += 1
                 results.append({
                     "title": book["title"],
@@ -572,14 +715,17 @@ def index():
         books=books,
         count=len(books),
         mode=mode,
-        sync_tag=SYNC_TAG,
-        interval=SYNC_INTERVAL_MINUTES,
+        sync_tag=get_sync_tag(),
+        interval=get_sync_interval_minutes(),
         last_run=get_last_sync_run(),
     )
 
 @app.post("/sync")
+@csrf.exempt
 def sync():
-    summary = run_sync_cycle("manual")
+    enforce_same_origin_post()
+    force_resync = request.form.get("force_resync") == "1"
+    summary = run_sync_cycle("manual", force_resync=force_resync)
 
     return render_template(
         "results.html",
@@ -590,16 +736,74 @@ def sync():
         skipped=summary["skipped"],
         mode="manual",
         message=summary["message"],
+        force_resync=force_resync,
     )
 
 
-@app.post("/mode")
-def set_mode():
-    requested_mode = (request.form.get("mode") or "").strip().lower()
-    if requested_mode not in VALID_MODES:
-        abort(400)
-    set_sync_mode(requested_mode)
-    return redirect(url_for("index"))
+@app.get("/settings")
+def settings():
+    return render_template(
+        "settings.html",
+        app_port=get_port(),
+        library_dir=get_library_dir(),
+        api_key=get_api_key(),
+        sync_interval_minutes=get_sync_interval_minutes(),
+        sync_tag=get_sync_tag(),
+        mode=get_sync_mode(),
+        saved=request.args.get("saved"),
+        error=request.args.get("error"),
+    )
+
+
+@app.post("/settings")
+@csrf.exempt
+def update_settings():
+    enforce_same_origin_post()
+    app_port = (request.form.get("app_port") or "").strip()
+    library_dir = (request.form.get("library_dir") or "").strip()
+    api_key = (request.form.get("api_key") or "").strip()
+    sync_interval = (request.form.get("sync_interval_minutes") or "").strip()
+    sync_tag = (request.form.get("sync_tag") or "").strip()
+    sync_mode = (request.form.get("mode") or "").strip().lower()
+
+    if not library_dir or not sync_tag:
+        return redirect(url_for("settings", error="library_dir_or_sync_tag"))
+
+    try:
+        app_port_value = int(app_port)
+        interval_value = int(sync_interval)
+    except ValueError:
+        return redirect(url_for("settings", error="port_or_interval"))
+
+    if app_port_value <= 0 or interval_value <= 0:
+        return redirect(url_for("settings", error="port_or_interval"))
+
+    if sync_mode not in VALID_MODES:
+        return redirect(url_for("settings", error="mode"))
+
+    updates = {
+        "app_port": str(app_port_value),
+        "library_dir": library_dir,
+        "api_key": api_key,
+        "sync_interval_minutes": str(interval_value),
+        "sync_tag": sync_tag,
+    }
+    for key, value in updates.items():
+        set_setting(key, value)
+
+    set_sync_mode(sync_mode)
+    configure_scheduler()
+    save_managed_env(
+        {
+            "APP_PORT": str(app_port_value),
+            "CALIBRE_LIBRARY_DIR": library_dir,
+            "BOOKFUSION_API_KEY": api_key,
+            "SYNC_INTERVAL_MINUTES": str(interval_value),
+            "SYNC_TAG": sync_tag,
+            "DEFAULT_SYNC_MODE": sync_mode,
+        }
+    )
+    return redirect(url_for("settings", saved="1"))
 
 
 @app.get("/covers/<int:book_id>")
@@ -608,8 +812,9 @@ def book_cover(book_id):
     if not relative_path:
         abort(404)
 
-    lib_root = os.path.realpath(LIB_DIR)
-    book_dir = os.path.realpath(os.path.join(LIB_DIR, relative_path))
+    library_dir = get_library_dir()
+    lib_root = os.path.realpath(library_dir)
+    book_dir = os.path.realpath(os.path.join(library_dir, relative_path))
     if not book_dir.startswith(f"{lib_root}{os.sep}"):
         abort(404)
 
@@ -623,22 +828,14 @@ def book_cover(book_id):
 if __name__ == "__main__":
     init_state_db()
     get_sync_mode()
-    scheduler.add_job(
-        scheduled_sync_job,
-        "interval",
-        minutes=SYNC_INTERVAL_MINUTES,
-        id="bookfusion-listening-mode",
-        replace_existing=True,
-        max_instances=1,
-        coalesce=True,
-    )
+    configure_scheduler()
     scheduler.start()
     atexit.register(lambda: scheduler.shutdown(wait=False))
     logger.info(
         "bookfusion-sync started on port=%s mode=%s interval=%sm sync_tag=%s",
-        APP_PORT,
+        get_port(),
         get_sync_mode(),
-        SYNC_INTERVAL_MINUTES,
-        SYNC_TAG,
+        get_sync_interval_minutes(),
+        get_sync_tag(),
     )
-    app.run(host="0.0.0.0", port=APP_PORT)
+    app.run(host="0.0.0.0", port=get_port())

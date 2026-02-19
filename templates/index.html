@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>CWA Calibre Sync</title>
+    <title>CWA-to-Bookfusion Sync</title>
     <style>
         body {
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
@@ -31,25 +31,24 @@
             margin-bottom: 12px;
         }
 
-        .mode-row {
+        .top-links {
             display: flex;
-            gap: 8px;
-            margin-bottom: 12px;
+            justify-content: flex-end;
+            margin-bottom: 10px;
         }
 
-        .mode-row form {
-            flex: 1;
-        }
-
-        .mode-row button {
-            width: 100%;
-            padding: 10px;
-            font-size: 14px;
-            background: #2a2a2a;
-        }
-
-        .mode-row button.active {
-            background-color: #2d89ef;
+        .top-links a {
+            color: #9dc9ff;
+            font-size: 20px;
+            line-height: 1;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 32px;
+            height: 32px;
+            border-radius: 8px;
+            border: 1px solid #3f3f3f;
+            background: #1a1a1a;
         }
 
         button {
@@ -111,6 +110,21 @@
             color: #c5c5c5;
             font-size: 13px;
             text-align: center;
+        }
+
+        .resync {
+            margin-top: 10px;
+            margin-bottom: 12px;
+            font-size: 13px;
+            color: #cfcfcf;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .resync input[type="checkbox"] {
+            width: auto;
+            margin: 0;
         }
 
         .queue-grid {
@@ -182,22 +196,12 @@
 </head>
 <body>
     <main class="container">
-        <h1>CWA Calibre Sync</h1>
+        <h1>CWA-to-Bookfusion Sync</h1>
+        <div class="top-links">
+            <a href="/settings" aria-label="Settings" title="Settings">⚙</a>
+        </div>
 
         <div class="card">
-            <div class="mode-row">
-                <form action="/mode" method="post">
-                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                    <input type="hidden" name="mode" value="manual">
-                    <button type="submit" class="{{ 'active' if mode == 'manual' else '' }}">Manual</button>
-                </form>
-                <form action="/mode" method="post">
-                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                    <input type="hidden" name="mode" value="automatic">
-                    <button type="submit" class="{{ 'active' if mode == 'automatic' else '' }}">Automatic</button>
-                </form>
-            </div>
-
             <div class="count">
                 {{ count }} {{ 'Book' if count == 1 else 'Books' }} ready for sync
             </div>
@@ -205,6 +209,10 @@
             {% if count > 0 %}
             <form id="sync-form" action="/sync" method="post">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <label class="resync">
+                    <input type="checkbox" name="force_resync" value="1">
+                    Force re-sync (ignore "already synced" checks)
+                </label>
                 <button id="sync-button" type="submit">
                     {% if mode == 'automatic' %}
                     Sync Now (Manual Trigger)
